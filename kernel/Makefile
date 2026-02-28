@@ -12,7 +12,7 @@ CC = riscv64-unknown-elf-gcc
 CFLAGS = -nostdlib -fno-builtin -mcmodel=medany -g -Wall
 
 # 3. 目标文件
-OBJS = boot.o uart.o main.o
+OBJS = boot.o uart.o printf.o main.o
 
 # 4. 默认目标：链接成最终的 ELF 镜像
 os.elf: $(OBJS)
