@@ -3,22 +3,19 @@
 
 /*
  * 向内核发送 打印字符 的系统调用
+ * (未来可以通过实现真正的 sys_write(1, &c, 1) 来替代)
  */
 void sys_putchar(char c) {
-    // RISC-V 系统调用规矩：a7 放业务号，a0 放参数 1
     asm volatile(
-        "mv a7, %0\n"    // 填入系统调用号 1
-        "mv a0, %1\n"    // 填入要打印的字符
-        "ecall\n"        // 拨打 110 求助内核！
+        "mv a7, %0\n"    // 【修改】：使用标准的 SYS_WRITE (64)
+        "mv a0, %1\n"    
+        "ecall\n"        
         : 
-        : "r"(SYS_WRITE_CHAR), "r"(c)
-        : "a0", "a7"     // 告诉编译器，这两个寄存器被我修改了
+        : "r"(SYS_WRITE), "r"(c)
+        : "a0", "a7"     
     );
 }
 
-/*
- * 包装函数：打印整个字符串
- */
 void sys_print(const char *s) {
     while (*s) {
         sys_putchar(*s++);
@@ -30,10 +27,10 @@ void sys_print(const char *s) {
  */
 void sys_yield(void) {
     asm volatile(
-        "mv a7, %0\n"
+        "mv a7, %0\n"    // 【修改】：使用标准的 SYS_SCHED_YIELD (124)
         "ecall\n"
         : 
-        : "r"(SYS_YIELD)
+        : "r"(SYS_SCHED_YIELD)
         : "a7"
     );
 }

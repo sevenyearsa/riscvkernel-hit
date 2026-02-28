@@ -25,11 +25,33 @@ int current_task = 0;
 
 static void (*task_entry_points[MAX_TASKS])(void);
 
+/*
+ * 真正的降维包装器 (替换掉原来的 task_wrapper)
+ */
 void task_wrapper(void) {
-    asm volatile("csrsi mstatus, 8");
-    task_entry_points[current_task]();
-}
+    // 1. 获取当前任务真正的入口函数地址
+    unsigned long entry = (unsigned long)task_entry_points[current_task];
+    unsigned long mstatus;
 
+    // 2. 读取当前的总闸状态
+    asm volatile("csrr %0, mstatus" : "=r"(mstatus));
+
+    // 3. 【核心魔法：修改 MPP 位，彻底剥夺特权！】
+    // MPP 是 mstatus 的第 11 和 12 位。我们把这两位清零 (00 代表 U-mode)
+    mstatus &= ~(3 << 11);
+
+    // 4. 开启未来 U-mode 的时钟中断 (MPIE = 1)
+    mstatus |= (1 << 7);
+
+    // 5. 伪造现场并执行 mret！硬件会被骗过，瞬间降级到 U-mode 并跳入 entry！
+    asm volatile(
+        "csrw mstatus, %0\n"      
+        "csrw mepc, %1\n"         
+        "mret"                    
+        : 
+        : "r"(mstatus), "r"(entry)
+    );
+}
 /*
  * 进程初始化：分配独立页表与私有内存
  */
@@ -63,7 +85,7 @@ void task_init(int id, void (*func)(void)) {
     map_page(my_pgd, 0x40000000, private_phys_page, PTE_R | PTE_W | PTE_U | PTE_V | PTE_A | PTE_D);
     
     uint64_t readonly_phys_page = (uint64_t)alloc_page();
-    map_page(my_pgd, 0x50000000, readonly_phys_page, PTE_R | PTE_U | PTE_V | PTE_A | PTE_D);
+    map_page(my_pgd, 0x50000000, readonly_phys_page, PTE_R | PTE_W | PTE_U | PTE_V | PTE_A | PTE_D);
     // 4. 生成专属的 satp 通行证 (Mode = Sv39)
     tasks[id].satp = (8ULL << 60) | ((uint64_t)my_pgd >> 12);
 

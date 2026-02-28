@@ -12,37 +12,38 @@ extern unsigned long get_task_satp(int id);
 #include "syscall.h"
 // main.c
 // main.c
-void task_a(void) {
-    sys_print("\n => Process A: Reading from Read-Only page (0x50000000)...\n");
+// main.c
+// void task_a(void) {
+//     sys_print("\n => Process A: Reading from Read-Only page (0x50000000)...\n");
     
-    // 我们自己指定地址，不依赖 C 语言的指针强转
-    unsigned long target_addr = 0x50000000;
+//     // 我们自己指定地址，不依赖 C 语言的指针强转
+//     unsigned long target_addr = 0x50000000;
     
-    // 读操作：这步应该成功
-    int val = *(volatile int *)target_addr; 
-    sys_print(" => Process A: Read successful!\n");
+//     // 读操作：这步应该成功
+//     int val = *(volatile int *)target_addr; 
+//     sys_print(" => Process A: Read successful!\n");
     
-    sys_print(" => Process A: Forcing WRITE via raw Assembly...\n");
+//     sys_print(" => Process A: Forcing WRITE via raw Assembly...\n");
     
-    // 【终极杀招】：强行向 CPU 注入一条 sw (Store Word) 汇编指令！
-    // 无论 GCC 怎么优化，这句话绝对会被硬生生刻进二进制文件里。
-    asm volatile(
-        "sw %0, 0(%1)\n"
-        : 
-        : "r"(999), "r"(target_addr)
-        : "memory"
-    );
-    
-    sys_print(" => ERROR: If you see this, MMU Write-Protection completely failed!\n");
-    while(1);
-}
-
-void task_b(void) {
-    while(1) {
-        sys_print("B");
-        for (volatile int i = 0; i < 15000000; i++);
-    }
-}
+//     // 【终极杀招】：强行向 CPU 注入一条 sw (Store Word) 汇编指令！
+//     // 无论 GCC 怎么优化，这句话绝对会被硬生生刻进二进制文件里。
+//     asm volatile(
+//         "sw %0, 0(%1)\n"
+//         : 
+//         : "r"(999), "r"(target_addr)
+//         : "memory"
+//     );
+//     val = *(volatile int *)target_addr; 
+//     printf("%d\n",val);
+//     sys_print(" => ERROR: If you see this, MMU Write-Protection completely failed!\n");
+//     while(1);
+// }
+// void task_b(void) {
+//     while(1) {
+//         sys_print("B");
+//         for (volatile int i = 0; i < 15000000; i++);
+//     }
+// }
 // void task_a(void) {
 //     sys_print("\n => Process A: I will try to hack the Kernel in 3 seconds...\n");
 //     for (volatile int i = 0; i < 30000000; i++); // 等待一会
@@ -96,24 +97,24 @@ void task_b(void) {
 //     }
 // }
 // 用户态进程 A
-// void task_a(void) {
-//     sys_print("\n => Process A started in strictly isolated U-mode.\n");
+void task_a(void) {
+    sys_print("\n => Process A started in strictly isolated U-mode.\n");
     
-//     while(1) {
-//         sys_print("A");
-//         for (volatile int i = 0; i < 150000000; i++);
-//     }
-// }
+    while(1) {
+        sys_print("A");
+        for (volatile int i = 0; i < 150000000; i++);
+    }
+}
 
-// // 用户态进程 B
-// void task_b(void) {
-//     sys_print("\n => Process B started in strictly isolated U-mode.\n");
+// 用户态进程 B
+void task_b(void) {
+    sys_print("\n => Process B started in strictly isolated U-mode.\n");
     
-//     while(1) {
-//         sys_print("B");
-//         for (volatile int i = 0; i < 150000000; i++);
-//     }
-// }
+    while(1) {
+        sys_print("B");
+        for (volatile int i = 0; i < 150000000; i++);
+    }
+}
 
 void os_main(void) {
     uart_init();

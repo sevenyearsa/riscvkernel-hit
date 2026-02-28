@@ -6,7 +6,7 @@ extern void uart_putc(char c);
 
 // 引入系统调用号
 #include "syscall.h"
-
+extern int current_task;
 // 注意参数变多了！接收从汇编 a0~a5 传来的数据
 unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long tval, 
                            unsigned long arg0, unsigned long arg1, unsigned long sys_num) {
@@ -25,23 +25,35 @@ unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long
     // --- 处理异常和系统调用 ---
     else {
         // 来自 U-mode (8) 或 M-mode (11) 的 ecall
+       // 来自 U-mode (8) 或 M-mode (11) 的 ecall
         if (exception_code == 8 || exception_code == 11) {
             
             // 系统调用分发中心 (Syscall Dispatcher)
             switch (sys_num) {
-                case SYS_WRITE_CHAR:
-                    // 只有在 M-mode 下，调用 uart_putc 才是绝对安全的
+                // 【修改】：拦截标准写入调用
+                case SYS_WRITE:
+                    // 目前我们直接暴风吸入 a0 作为字符打印。
+                    // 未来如果支持 fd 和 buf，就要根据规范处理 a0(fd), a1(buf), a2(count) 了。
                     uart_putc((char)arg0); 
                     break;
-                case SYS_YIELD:
+                    
+                // 【修改】：拦截标准让出调用
+                case SYS_SCHED_YIELD:
                     task_yield();
                     break;
+                    
+                // 【新增】：可以顺手预留一个 EXIT 接口，防止非法调用导致崩溃
+                case SYS_EXIT:
+                    printf("\n[KERNEL] Process %d called exit(%d)! (Not implemented yet)\n", 
+                           current_task, arg0);
+                    while(1); // 暂时先挂起
+                    break;
+                    
                 default:
                     printf("\n[KERNEL] Invalid syscall number: %d\n", sys_num);
                     break;
             }
             
-            // 极其关键：系统调用完成后，PC 必须 +4 跳过原来的 ecall 指令
             return epc + 4;
         }
 

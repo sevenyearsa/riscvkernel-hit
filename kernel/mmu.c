@@ -71,7 +71,7 @@ void mmu_init(void) {
     }
 
     // 恒等映射 UART
-    map_page((uint64_t *)root_page_table, 0x10000000, 0x10000000, PTE_R | PTE_W | PTE_U | PTE_V);
+    map_page((uint64_t *)root_page_table, 0x10000000, 0x10000000, PTE_R | PTE_W  | PTE_V);
 
     // 恒等映射 RAM (0x80000000 - 0x88000000)
     uint64_t ram_start = 0x80000000L;
