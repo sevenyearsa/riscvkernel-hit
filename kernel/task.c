@@ -2,20 +2,22 @@
 extern void printf(const char *fmt, ...);
 extern void switch_to(void *prev, void *next);
 
-// 定义任务状态
-#define TASK_READY   0   // 准备就绪，随时可以跑
-#define TASK_RUNNING 1   // 正在运行
-#define TASK_SLEEPING 2  // 正在休眠（等锁）
+// 引入内存管理相关的函数和宏
+#include "mmu.h"
+extern void *alloc_page(void);
+
+#define TASK_READY   0
+#define TASK_RUNNING 1
+#define TASK_SLEEPING 2
 
 struct context {
     unsigned long ra;
     unsigned long sp;
     unsigned long s0, s1, s2, s3;
+    unsigned long satp; // 【新增】：每个进程专属的 MMU 根页表通行证！
 };
 
 #define MAX_TASKS 2
-
-// 将状态加入任务结构体（为了简单，我们用平行数组管理状态）
 struct context tasks[MAX_TASKS];
 int task_states[MAX_TASKS]; 
 unsigned char task_stacks[MAX_TASKS][4096]; 
@@ -28,21 +30,52 @@ void task_wrapper(void) {
     task_entry_points[current_task]();
 }
 
+/*
+ * 进程初始化：分配独立页表与私有内存
+ */
 void task_init(int id, void (*func)(void)) {
     task_entry_points[id] = func;
     tasks[id].ra = (unsigned long)task_wrapper; 
     tasks[id].sp = (unsigned long)&task_stacks[id][4096];
-    task_states[id] = TASK_READY; // 初始状态为就绪
-    printf("[SYS] Task %d initialized (READY).\n", id);
+    task_states[id] = TASK_READY;
+
+    // ==========================================================
+    // 【核心黑魔法：创建独立的地址空间 (Process Address Space)】
+    // ==========================================================
+    
+    // 1. 申请一页物理内存，作为这个进程的专属顶级页表 (PGD)
+    uint64_t *my_pgd = (uint64_t *)alloc_page();
+    
+    // 2. 抄写内核宇宙（共享内核空间）：
+    // 把内核 root_page_table 里的 512 个顶级页表项全部复制过来。
+    // 这样，进程依然能找到 UART 和 Trap 处理函数。
+    uint64_t *root_pgd = (uint64_t *)root_page_table;
+    for (int i = 0; i < 512; i++) {
+        my_pgd[i] = root_pgd[i];
+    }
+    
+    // 3. 开辟私有领地（进程隔离证明）：
+    // 我们申请一页全新的物理内存
+    uint64_t private_phys_page = (uint64_t)alloc_page();
+    
+    // 将这个全新的物理页，强行映射到所有进程都一样的虚拟地址：0x40000000
+    // 赋予 U-mode 可读可写权限 (PTE_R | PTE_W | PTE_U | PTE_V)
+    map_page(my_pgd, 0x40000000, private_phys_page, PTE_R | PTE_W | PTE_U | PTE_V | PTE_A | PTE_D);
+    
+    uint64_t readonly_phys_page = (uint64_t)alloc_page();
+    map_page(my_pgd, 0x50000000, readonly_phys_page, PTE_R | PTE_U | PTE_V | PTE_A | PTE_D);
+    // 4. 生成专属的 satp 通行证 (Mode = Sv39)
+    tasks[id].satp = (8ULL << 60) | ((uint64_t)my_pgd >> 12);
+
+    printf("[SYS] Process %d created! Private PGD at phys: 0x%x\n", id, my_pgd);
 }
 
 /*
- * 智能调度器：只调度 READY 或 RUNNING 的任务，跳过 SLEEPING 的任务
+ * 智能调度器：现在不仅换脑（栈），还要换宇宙（satp）！
  */
 void task_yield(void) {
     int prev = current_task;
     
-    // 寻找下一个不是 SLEEPING 状态的任务
     do {
         current_task = (current_task + 1) % MAX_TASKS;
     } while (task_states[current_task] == TASK_SLEEPING);
@@ -52,16 +85,27 @@ void task_yield(void) {
             task_states[prev] = TASK_READY;
         }
         task_states[current_task] = TASK_RUNNING;
+        
+        // 【新增】：切换 MMU 宇宙！
+        // 因为内核代码在所有的 PGD 里映射的物理地址完全一样，
+        // 所以我们在这里直接切换 satp，CPU 不会崩溃，无缝滑入新进程的虚拟空间！
+        asm volatile("csrw satp, %0" : : "r"(tasks[current_task].satp));
+        // 刷新 TLB 缓存，防止读取上一个进程的幽灵数据
+        asm volatile("sfence.vma zero, zero");
+        
         switch_to(&tasks[prev], &tasks[current_task]);
     }
 }
 
-// 暴露给 Mutex 用的休眠和唤醒接口
+// ... 睡眠和唤醒函数保持不变 ...
 void task_sleep(void) {
     task_states[current_task] = TASK_SLEEPING;
-    task_yield(); // 状态改为休眠后，立刻主动交出 CPU！
+    task_yield(); 
 }
-
 void task_wakeup(int id) {
     task_states[id] = TASK_READY;
+}
+
+unsigned long get_task_satp(int id) {
+    return tasks[id].satp;
 }

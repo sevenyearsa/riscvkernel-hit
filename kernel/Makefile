@@ -13,7 +13,7 @@ CFLAGS = -nostdlib -fno-builtin -mcmodel=medany -g -Wall
 
 # 3. 目标文件
 OBJS = boot.o uart.o printf.o trap.o trap_handler.o timer.o \
-	switch.o task.o spinlock.o main.o
+	switch.o task.o spinlock.o page.o mmu.o user_lib.o main.o
 
 # 4. 默认目标：链接成最终的 ELF 镜像
 os.elf: $(OBJS)
