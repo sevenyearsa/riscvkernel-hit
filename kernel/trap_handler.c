@@ -7,9 +7,11 @@ extern void uart_putc(char c);
 // 引入系统调用号
 #include "syscall.h"
 extern int current_task;
+extern int task_fork(unsigned long *parent_sp, unsigned long epc); // 引入 fork 函数
 // 注意参数变多了！接收从汇编 a0~a5 传来的数据
 unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long tval, 
-                           unsigned long arg0, unsigned long arg1, unsigned long sys_num) {
+                           unsigned long arg0, unsigned long arg1, unsigned long sys_num,
+                        unsigned long *sp) {
                            
     int is_interrupt = (cause & 0x8000000000000000L) != 0;
     unsigned long exception_code = cause & 0x7FFFFFFFFFFFFFFFL;
@@ -46,7 +48,11 @@ unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long
                 case SYS_EXIT:
                     task_exit(arg0);
                     break;
-                    
+                case SYS_CLONE: // 220 号系统调用
+                    // fork 返回的子进程 PID，我们直接强行写回栈里的 a0 寄存器位置！
+                    // trap.S 中 a0 存在 10*8(sp) 的位置，即数组的第 10 个元素
+                    sp[10] = task_fork(sp, epc);
+                    break;
                 default:
                     printf("\n[KERNEL] Invalid syscall number: %d\n", sys_num);
                     break;

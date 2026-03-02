@@ -7,6 +7,8 @@ extern void switch_to(void *prev, void *next);
 #include "page.h" // 引入计数器
 extern void free_user_page_table(uint64_t *pgd); // 引入回收机
 extern void *alloc_page(void);
+extern uint64_t *copy_user_page_table(uint64_t *src_pgd);
+extern void ret_from_fork(void);
 
 #define TASK_READY   0
 #define TASK_RUNNING 1
@@ -20,9 +22,9 @@ struct context {
     unsigned long satp; // 【新增】：每个进程专属的 MMU 根页表通行证！
 };
 
-#define MAX_TASKS 2
+#define MAX_TASKS 4
 struct context tasks[MAX_TASKS];
-int task_states[MAX_TASKS]; 
+int task_states[MAX_TASKS] = {TASK_DEAD,TASK_DEAD,TASK_DEAD,TASK_DEAD}; 
 unsigned char task_stacks[MAX_TASKS][4096]; 
 int current_task = 0;
 
@@ -32,27 +34,25 @@ static void (*task_entry_points[MAX_TASKS])(void);
  * 真正的降维包装器 (替换掉原来的 task_wrapper)
  */
 void task_wrapper(void) {
-    // 1. 获取当前任务真正的入口函数地址
     unsigned long entry = (unsigned long)task_entry_points[current_task];
     unsigned long mstatus;
-
-    // 2. 读取当前的总闸状态
     asm volatile("csrr %0, mstatus" : "=r"(mstatus));
-
-    // 3. 【核心魔法：修改 MPP 位，彻底剥夺特权！】
-    // MPP 是 mstatus 的第 11 和 12 位。我们把这两位清零 (00 代表 U-mode)
+    
+    // 剥夺特权
     mstatus &= ~(3 << 11);
-
-    // 4. 开启未来 U-mode 的时钟中断 (MPIE = 1)
     mstatus |= (1 << 7);
 
-    // 5. 伪造现场并执行 mret！硬件会被骗过，瞬间降级到 U-mode 并跳入 entry！
+    // 【核心修复】：拿到该任务真正的私有栈地址！
+    unsigned long user_sp = tasks[current_task].sp;
+
+    // 强行把 CPU 的栈指针拨到 user_sp，彻底抛弃内核启动栈！
     asm volatile(
         "csrw mstatus, %0\n"      
         "csrw mepc, %1\n"         
+        "mv sp, %2\n"       // <--- 就是这致命的一句！拯救了整个宇宙
         "mret"                    
         : 
-        : "r"(mstatus), "r"(entry)
+        : "r"(mstatus), "r"(entry), "r"(user_sp)
     );
 }
 /*
@@ -169,4 +169,55 @@ void task_wakeup(int id) {
 
 unsigned long get_task_satp(int id) {
     return tasks[id].satp;
+}
+
+int task_fork(unsigned long *parent_sp, unsigned long epc) {
+    int child_id = -1;
+    // 1. 在产房里找一个空床位 (找一个 DEAD 的任务槽)
+    for (int i = 0; i < MAX_TASKS; i++) {
+        if (task_states[i] == TASK_DEAD) {
+            child_id = i;
+            break;
+        }
+    }
+    if (child_id == -1) return -1; // 产房满了，fork 失败
+
+    // 2. 复制躯体：深拷贝父进程的内核栈内存
+    for (int i = 0; i < 4096; i++) {
+        task_stacks[child_id][i] = task_stacks[current_task][i];
+    }
+
+    // 3. 复制灵魂：拷贝上下文结构体
+    tasks[child_id] = tasks[current_task];
+
+// 4. 时空修复
+    unsigned long offset = (unsigned long)parent_sp - (unsigned long)task_stacks[current_task];
+    tasks[child_id].sp = (unsigned long)task_stacks[child_id] + offset;
+    tasks[child_id].ra = (unsigned long)ret_from_fork;
+
+    // 获取子进程的 Trap Frame 指针
+    unsigned long *child_sp = (unsigned long *)tasks[child_id].sp;
+    
+    // 给子进程的 a0 塞入 0 (作为 fork 返回值)
+    child_sp[10] = 0; 
+    
+    // ==========================================
+    // 【核心神来之笔】：强行注入苏醒地址！
+    // 我们直接把计算好的 epc + 4 塞进栈的第 0 个位置。
+    // 彻底摆脱对汇编栈历史遗留数据的依赖！
+    // ==========================================
+    child_sp[0] = epc + 4;
+
+    // 6. 复制记忆：克隆整个虚拟内存页表
+    uint64_t parent_pgd_pa = (tasks[current_task].satp & 0xFFFFFFFFFFF) << 12;
+    uint64_t *child_pgd = copy_user_page_table((uint64_t *)parent_pgd_pa);
+    
+    // 给子进程发放新的 satp 通行证
+    tasks[child_id].satp = (8ULL << 60) | ((uint64_t)child_pgd >> 12);
+
+    // 7. 唤醒子进程，加入调度队列
+    task_states[child_id] = TASK_READY;
+
+    // 父进程的 a0 会得到子进程的 PID (child_id)
+    return child_id; 
 }

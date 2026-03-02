@@ -137,3 +137,52 @@ void free_user_page_table(uint64_t *pgd) {
     // 最后，把这张顶级页表（PGD）本身也给扬了！
     free_page(pgd); 
 }
+
+uint64_t *copy_user_page_table(uint64_t *src_pgd) {
+    // 为子进程申请一张全新的顶级页表
+    uint64_t *dst_pgd = (uint64_t *)alloc_page();
+    uint64_t *root_pgd = (uint64_t *)root_page_table;
+
+    for (int i = 0; i < 512; i++) {
+        if (src_pgd[i] == root_pgd[i]) {
+            // 内核的共享设施（如 UART, RAM 代码区），直接抄指针，不用深拷贝
+            dst_pgd[i] = src_pgd[i];
+            continue;
+        }
+
+        if (src_pgd[i] & PTE_V) {
+            uint64_t *src_pmd = (uint64_t *)pte_to_pa(src_pgd[i]);
+            uint64_t *dst_pmd = (uint64_t *)alloc_page();
+            // 复制中间页表路标，保留原有的权限位 (低10位)
+            dst_pgd[i] = pa_to_pte((uint64_t)dst_pmd, src_pgd[i] & 0x3FF);
+
+            for (int j = 0; j < 512; j++) {
+                if (src_pmd[j] & PTE_V) {
+                    uint64_t *src_pte_table = (uint64_t *)pte_to_pa(src_pmd[j]);
+                    uint64_t *dst_pte_table = (uint64_t *)alloc_page();
+                    dst_pmd[j] = pa_to_pte((uint64_t)dst_pte_table, src_pmd[j] & 0x3FF);
+
+                    for (int k = 0; k < 512; k++) {
+                        if (src_pte_table[k] & PTE_V) {
+                            // 触底！找到了父进程真实的物理数据页！
+                            uint64_t src_data_pa = pte_to_pa(src_pte_table[k]);
+                            // 为子进程申请一块独立的新物理地皮
+                            uint64_t dst_data_pa = (uint64_t)alloc_page();
+
+                            // 极其暴力而优雅的深拷贝：逐字节复刻 4096 字节的数据！
+                            char *src_data = (char *)src_data_pa;
+                            char *dst_data = (char *)dst_data_pa;
+                            for (int b = 0; b < 4096; b++) {
+                                dst_data[b] = src_data[b];
+                            }
+
+                            // 映射给子进程，权限与父进程完全一致
+                            dst_pte_table[k] = pa_to_pte(dst_data_pa, src_pte_table[k] & 0x3FF);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return dst_pgd;
+}

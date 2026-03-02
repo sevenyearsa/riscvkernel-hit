@@ -52,12 +52,17 @@ trap_vector:
     ld   a4, 11*8(sp)    # 第 5 个参数：从栈里挖出用户刚才存的 a1
     ld   a5, 17*8(sp)    # 第 6 个参数：从栈里挖出用户刚才存的 a7 (业务号)
 
+    mv   a6, sp
+
     # 4. 呼叫 C 语言的内核总管！
     call trap_handler
 
     # 5. trap_handler 结束工作后，会通过 a0 返回新的 PC 地址
     # 我们立刻把这个新地址写入 mepc
     csrw mepc, a0
+
+.global trap_return
+    trap_return:
 
     # 6. 恢复现场：把寄存器原封不动地从栈里挖出来还给 CPU
     ld ra, 1*8(sp)
@@ -95,3 +100,11 @@ trap_vector:
     
     # 7. 神圣跳跃：降级回到 User 态的下一条指令
     mret
+# 【新增】：在文件最后加上这个子进程专属入口
+.global ret_from_fork
+ret_from_fork:
+    # 此时的 0(sp) 里，躺着的是我们在 C 语言里刚刚强行塞进去的 (epc + 4)
+    ld t0, 0(sp)       
+    csrw mepc, t0      # 直接装填进硬件
+    
+    j trap_return      # 跳回恢复现场的流程，降维打击！

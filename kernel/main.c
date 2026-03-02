@@ -13,27 +13,39 @@ extern unsigned long get_task_satp(int id);
 
 // main.c 修改任务代码
 
+extern int sys_fork(void);
+
 void task_a(void) {
-    sys_print("\n => Process A started. I will work for 5 cycles and then die.\n");
+    sys_print("\n => Process A: I am the father. Calling fork()...\n");
     
-    // A 只打印 5 次就自杀
-    for (int i = 0; i < 5; i++) {
-        sys_print("A");
-        for (volatile int j = 0; j < 15000000; j++);
+    // 【见证奇迹的时刻】
+    int pid = sys_fork();
+
+    if (pid == 0) {
+        // --- 这段代码只有子进程才会执行！---
+        sys_print("\n => [CHILD] Hello from the cloned universe! I am the son.\n");
+        while(1) {
+            sys_print("S"); // Son
+            for (volatile int i = 0; i < 15000000; i++);
+        }
+    } else if (pid > 0) {
+        // --- 这段代码只有父进程才会执行！---
+        sys_print("\n => [PARENT] I created a son! Returning to my work.\n");
+        while(1) {
+            sys_print("P"); // Parent
+            for (volatile int i = 0; i < 15000000; i++);
+        }
+    } else {
+        sys_print("\n => Fork failed!\n");
+        while(1);
     }
-    
-    sys_print("\n => Process A finished its job. Calling sys_exit(0)...\n");
-    sys_exit(0); 
 }
 
 void task_b(void) {
-    sys_print("\n => Process B started. I am an infinite daemon.\n");
-    
-    // B 永远运行
+    sys_print("\n => Process B: I am an observer.\n");
     while(1) {
         sys_print("B");
-        for (volatile int i = 0; i < 15000000; i++);
-        // sys_exit(1); 
+        for (volatile int i = 0; i < 20000000; i++);
     }
 }
 void os_main(void) {

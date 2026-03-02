@@ -48,3 +48,16 @@ void sys_exit(int status) {
     // CPU 永远不会回到这行代码。加上死循环是为了防止系统出现幽灵 BUG。
     while(1); 
 }
+
+int sys_fork(void) {
+    int ret;
+    asm volatile(
+        "mv a7, %1\n"
+        "ecall\n"
+        "mv %0, a0\n" // 把内核塞进 a0 的返回值抓出来
+        : "=r"(ret)
+        : "r"(SYS_CLONE)
+        : "a0", "a7"
+    );
+    return ret;
+}
