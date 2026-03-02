@@ -5,10 +5,13 @@ extern void switch_to(void *prev, void *next);
 // 引入内存管理相关的函数和宏
 #include "mmu.h"
 #include "page.h" // 引入计数器
-extern void free_user_page_table(uint64_t *pgd); // 引入回收机
+#include "elf.h"
+#include "../user/app_bin.h"  // 引入你用 xxd 生成的第三方应用数组
+// extern void free_user_page_table(uint64_t *pgd); // 引入回收机
 extern void *alloc_page(void);
 extern uint64_t *copy_user_page_table(uint64_t *src_pgd);
 extern void ret_from_fork(void);
+
 
 #define TASK_READY   0
 #define TASK_RUNNING 1
@@ -220,4 +223,71 @@ int task_fork(unsigned long *parent_sp, unsigned long epc) {
 
     // 父进程的 a0 会得到子进程的 PID (child_id)
     return child_id; 
+}
+/*
+ * 灵魂注入 (execve)：抹除当前进程的记忆，注入 ELF 程序的灵魂
+ */
+unsigned long task_exec(unsigned long epc) {
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)app_elf; // 读取数组头部
+    
+    // 1. 验明正身
+    if (ehdr->e_ident[0] != 0x7f || ehdr->e_ident[1] != 'E' || 
+        ehdr->e_ident[2] != 'L' || ehdr->e_ident[3] != 'F') {
+        printf("\n[KERNEL] Exec failed: Not a valid ELF file!\n");
+        return epc + 4; // 失败了就老老实实回去
+    }
+
+    printf("\n[KERNEL] Loading ELF... Entry point at 0x%x\n", ehdr->e_entry);
+
+    // 2. 开辟一个全新的虚拟宇宙 (申请新的 PGD)
+    uint64_t *new_pgd = (uint64_t *)alloc_page();
+    uint64_t *root_pgd = (uint64_t *)root_page_table;
+    for (int i = 0; i < 512; i++) {
+        new_pgd[i] = root_pgd[i]; // 保留内核基础设施
+    }
+
+    // 3. 解析 Program Headers，搬运灵魂碎片 (代码段、数据段)
+    Elf64_Phdr *phdr = (Elf64_Phdr *)(app_elf + ehdr->e_phoff);
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type == 1) { // 找到 PT_LOAD 段！
+            uint64_t vaddr = phdr[i].p_vaddr;
+            uint64_t memsz = phdr[i].p_memsz;
+            uint64_t filesz = phdr[i].p_filesz;
+            uint64_t offset = phdr[i].p_offset;
+
+            // 按照 4KB 对齐分页加载
+            uint64_t start_page = vaddr & ~0xFFFULL;
+            uint64_t end_page = (vaddr + memsz + 0xFFF) & ~0xFFFULL;
+
+            for (uint64_t page = start_page; page < end_page; page += 4096) {
+                char *phys = (char *)alloc_page();
+                for(int b = 0; b < 4096; b++) phys[b] = 0; // 先全部清零 (为了 BSS 段)
+
+                // 将文件中真实的数据拷贝到物理内存
+                uint64_t copy_start = (page > vaddr) ? page : vaddr;
+                uint64_t copy_end = (page + 4096 < vaddr + filesz) ? page + 4096 : vaddr + filesz;
+                if (copy_start < copy_end) {
+                    uint64_t src_offset = offset + (copy_start - vaddr);
+                    for (uint64_t b = 0; b < (copy_end - copy_start); b++) {
+                        phys[(copy_start & 0xFFF) + b] = app_elf[src_offset + b];
+                    }
+                }
+                
+                // 赐予该页 U-mode 权限，并挂载到新宇宙的页表上
+                map_page(new_pgd, page, (uint64_t)phys, PTE_R | PTE_W | PTE_X | PTE_U | PTE_V | PTE_A | PTE_D);
+            }
+        }
+    }
+
+    // 4. 毁尸灭迹：使用我们的垃圾回收器，把旧的私有页表彻底扬了！
+    uint64_t old_pgd_pa = (tasks[current_task].satp & 0xFFFFFFFFFFF) << 12;
+    free_user_page_table((uint64_t *)old_pgd_pa);
+
+    // 5. 将当前进程的神经元 (satp) 连接到新宇宙！
+    tasks[current_task].satp = (8ULL << 60) | ((uint64_t)new_pgd >> 12);
+    asm volatile("csrw satp, %0" : : "r"(tasks[current_task].satp));
+    asm volatile("sfence.vma zero, zero"); // 刷新认知
+
+    // 6. 神来之笔：直接返回 ELF 的真实入口点！
+    return ehdr->e_entry; 
 }

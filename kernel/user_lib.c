@@ -61,3 +61,14 @@ int sys_fork(void) {
     );
     return ret;
 }
+
+// user_lib.c 追加：
+void sys_exec(void) {
+    asm volatile(
+        "mv a7, %0\n"
+        "ecall\n"
+        : 
+        : "r"(SYS_EXECVE)
+        : "a7"
+    );
+}

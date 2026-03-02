@@ -14,30 +14,31 @@ extern unsigned long get_task_satp(int id);
 // main.c 修改任务代码
 
 extern int sys_fork(void);
+extern void sys_exec(void); // 引入执行系统调用
 
 void task_a(void) {
     sys_print("\n => Process A: I am the father. Calling fork()...\n");
-    
-    // 【见证奇迹的时刻】
     int pid = sys_fork();
 
     if (pid == 0) {
-        // --- 这段代码只有子进程才会执行！---
-        sys_print("\n => [CHILD] Hello from the cloned universe! I am the son.\n");
-        while(1) {
-            sys_print("S"); // Son
-            for (volatile int i = 0; i < 15000000; i++);
-        }
-    } else if (pid > 0) {
-        // --- 这段代码只有父进程才会执行！---
-        sys_print("\n => [PARENT] I created a son! Returning to my work.\n");
-        while(1) {
-            sys_print("P"); // Parent
-            for (volatile int i = 0; i < 15000000; i++);
-        }
-    } else {
-        sys_print("\n => Fork failed!\n");
+        // --- 子进程区域 ---
+        sys_print("\n => [CHILD] I am the clone! I will now sacrifice my memory to the ELF...\n");
+        sys_print(" => [CHILD] Calling execve(). GOODBYE ORIGINAL SOUL!\n");
+        
+        // 呼叫夺舍机制！
+        sys_exec();
+        
+        // 如果 exec 成功，CPU 的 PC 指针会直接跳入 app.c 的 _start 函数
+        // 下面这句话永远不可能被打印！
+        sys_print(" => ERROR: If you see this, exec failed miserably!\n");
         while(1);
+    } else if (pid > 0) {
+        // --- 父进程区域 ---
+        sys_print("\n => [PARENT] My son went to run an App. I will continue my work.\n");
+        while(1) {
+            sys_print("P");
+            for (volatile int i = 0; i < 15000000; i++);
+        }
     }
 }
 

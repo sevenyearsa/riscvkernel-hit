@@ -3,7 +3,7 @@ extern void printf(const char *fmt, ...);
 extern void timer_load_next(void);
 extern void task_yield(void);
 extern void uart_putc(char c);
-
+extern unsigned long task_exec(unsigned long epc);
 // 引入系统调用号
 #include "syscall.h"
 extern int current_task;
@@ -53,6 +53,10 @@ unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long
                     // trap.S 中 a0 存在 10*8(sp) 的位置，即数组的第 10 个元素
                     sp[10] = task_fork(sp, epc);
                     break;
+                case SYS_EXECVE:
+                    // 极致优雅：如果 exec 成功，它会返回新程序的入口点
+                    // 我们直接 return，截断下面的 epc + 4 逻辑，让 CPU 降维后直接跳入新应用！
+                    return task_exec(epc);
                 default:
                     printf("\n[KERNEL] Invalid syscall number: %d\n", sys_num);
                     break;

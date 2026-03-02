@@ -1,0 +1,1 @@
+riscv64-unknown-elf-gcc -nostdlib -fno-builtin -mcmodel=medany -T app.ld app.c -o app.elf

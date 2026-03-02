@@ -1,7 +1,7 @@
 // mmu.h
 #ifndef MMU_H
 #define MMU_H
-
+#include "stdint.h"
 // 页大小 4KB
 #define PAGE_SIZE 4096
 
@@ -24,7 +24,7 @@
 #define PAGE_USER_RWX   (PTE_R | PTE_W | PTE_X | PTE_U | PTE_V)
 
 // 核心类型定义，使用 64 位无符号整数表示地址
-typedef unsigned long uint64_t;
+
 
 void mmu_init(void);
 
