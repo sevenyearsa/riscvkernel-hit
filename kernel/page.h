@@ -10,5 +10,5 @@
 void page_init(void);
 void *alloc_page(void);
 void free_page(void *p);
-
+int get_free_page_count(void);
 #endif

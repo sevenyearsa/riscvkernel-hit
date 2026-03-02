@@ -3,6 +3,7 @@
 
 extern void *alloc_page(void);
 extern void printf(const char *fmt, ...);
+extern void free_page(void *p);
 
 // 内核的顶级页表（Root Page Table）物理地址
 uint64_t root_page_table = 0;
@@ -96,4 +97,43 @@ void mmu_init(void) {
     asm volatile("sfence.vma zero, zero");
 
     printf("[SYS] MMU activated! System is now running in Virtual Memory space.\n");
+}
+
+void free_user_page_table(uint64_t *pgd) {
+    uint64_t *root_pgd = (uint64_t *)root_page_table;
+
+    // 遍历顶级页表 (PGD) 的 512 个槽位
+    for (int i = 0; i < 512; i++) {
+        // 1. 【安全锁】：如果这个表项和内核一模一样，说明是共享的内核空间（如 UART, RAM）
+        // 我们只是借用，绝对不能销毁！
+        if (pgd[i] == root_pgd[i]) {
+            continue;
+        }
+
+        // 2. 如果不一样，且 V 位为 1，说明这是该进程私有开辟的空间！
+        if (pgd[i] & PTE_V) {
+            uint64_t *pmd = (uint64_t *)pte_to_pa(pgd[i]);
+            
+            // 遍历第二级页表 (PMD)
+            for (int j = 0; j < 512; j++) {
+                if (pmd[j] & PTE_V) {
+                    uint64_t *pte_table = (uint64_t *)pte_to_pa(pmd[j]);
+                    
+                    // 遍历第三级页表 (叶子节点 PTE)
+                    for (int k = 0; k < 512; k++) {
+                        if (pte_table[k] & PTE_V) {
+                            // 【斩草除根】：拔掉存有用户真实数据的物理页！
+                            free_page((void *)pte_to_pa(pte_table[k]));
+                        }
+                    }
+                    // 拔掉第三级页表本身！
+                    free_page(pte_table); 
+                }
+            }
+            // 拔掉第二级页表本身！
+            free_page(pmd);
+        }
+    }
+    // 最后，把这张顶级页表（PGD）本身也给扬了！
+    free_page(pgd); 
 }

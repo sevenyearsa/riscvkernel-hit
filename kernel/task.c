@@ -4,11 +4,14 @@ extern void switch_to(void *prev, void *next);
 
 // 引入内存管理相关的函数和宏
 #include "mmu.h"
+#include "page.h" // 引入计数器
+extern void free_user_page_table(uint64_t *pgd); // 引入回收机
 extern void *alloc_page(void);
 
 #define TASK_READY   0
 #define TASK_RUNNING 1
 #define TASK_SLEEPING 2
+#define TASK_DEAD    3
 
 struct context {
     unsigned long ra;
@@ -92,27 +95,63 @@ void task_init(int id, void (*func)(void)) {
     printf("[SYS] Process %d created! Private PGD at phys: 0x%x\n", id, my_pgd);
 }
 
+void task_exit(int status) {
+    printf("\n[KERNEL] Process %d exited with status %d.\n", current_task, status);
+    
+    // 1. 宣判死亡
+    task_states[current_task] = TASK_DEAD;
+    
+    // 2. 打印死亡前的内存余量
+    int pages_before = get_free_page_count();
+    printf("[KERNEL] Before reclamation, free pages: %d\n", pages_before);
+    
+    // 3. 【核心回收】：拿着死者的 satp 通行证，还原出它的 PGD 物理地址，送进焚化炉！
+    // satp 寄存器的前 44 位是物理页号 (PPN)，左移 12 位就是 PGD 的绝对物理地址
+    uint64_t pgd_pa = (tasks[current_task].satp & 0xFFFFFFFFFFF) << 12;
+    free_user_page_table((uint64_t *)pgd_pa);
+    
+    // 4. 打印回收后的内存余量
+    int pages_after = get_free_page_count();
+    printf("[KERNEL] After reclamation, free pages: %d (Recovered %d pages!)\n", 
+           pages_after, pages_after - pages_before);
+    
+    // 5. 换人，死者安息
+    task_yield(); 
+}
 /*
- * 智能调度器：现在不仅换脑（栈），还要换宇宙（satp）！
+ * 【完全重写】智能调度器：现在要学会跳过死尸，并判断是不是全军覆没
  */
 void task_yield(void) {
     int prev = current_task;
+    int next = current_task;
+    int found = 0;
     
-    do {
-        current_task = (current_task + 1) % MAX_TASKS;
-    } while (task_states[current_task] == TASK_SLEEPING);
+    // 轮询寻找下一个活着 (READY 或 RUNNING) 的任务
+    for (int i = 0; i < MAX_TASKS; i++) {
+        next = (next + 1) % MAX_TASKS;
+        if (task_states[next] == TASK_READY || task_states[next] == TASK_RUNNING) {
+            found = 1;
+            break;
+        }
+    }
+    
+    // 如果找了一圈发现没活人了
+    if (!found) {
+        printf("\n[SYS] All tasks have exited. System halting.\n");
+        asm volatile("wfi" ::: "memory");
+    }
+    
+    current_task = next;
 
     if (prev != current_task) {
+        // 只有当之前的任务还在 RUNNING 时，才降级为 READY。
+        // 如果它是 SLEEPING 或者 DEAD，绝对不能修改它的状态！
         if (task_states[prev] == TASK_RUNNING) {
             task_states[prev] = TASK_READY;
         }
         task_states[current_task] = TASK_RUNNING;
         
-        // 【新增】：切换 MMU 宇宙！
-        // 因为内核代码在所有的 PGD 里映射的物理地址完全一样，
-        // 所以我们在这里直接切换 satp，CPU 不会崩溃，无缝滑入新进程的虚拟空间！
         asm volatile("csrw satp, %0" : : "r"(tasks[current_task].satp));
-        // 刷新 TLB 缓存，防止读取上一个进程的幽灵数据
         asm volatile("sfence.vma zero, zero");
         
         switch_to(&tasks[prev], &tasks[current_task]);

@@ -79,3 +79,12 @@ void free_page(void *p) {
     page->next = free_list;
     free_list = page;
 }
+int get_free_page_count(void) {
+    int count = 0;
+    struct page *p = free_list;
+    while (p) {
+        count++;
+        p = p->next;
+    }
+    return count;
+}

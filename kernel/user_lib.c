@@ -34,3 +34,17 @@ void sys_yield(void) {
         : "a7"
     );
 }
+
+void sys_exit(int status) {
+    asm volatile(
+        "mv a7, %0\n"
+        "mv a0, %1\n"
+        "ecall\n"
+        : 
+        : "r"(SYS_EXIT), "r"(status)
+        : "a0", "a7"
+    );
+    // 正常情况下，执行完 ecall 后，内核会把这个任务标记为死亡并切换走。
+    // CPU 永远不会回到这行代码。加上死循环是为了防止系统出现幽灵 BUG。
+    while(1); 
+}

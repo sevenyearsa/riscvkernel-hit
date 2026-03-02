@@ -44,9 +44,7 @@ unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long
                     
                 // 【新增】：可以顺手预留一个 EXIT 接口，防止非法调用导致崩溃
                 case SYS_EXIT:
-                    printf("\n[KERNEL] Process %d called exit(%d)! (Not implemented yet)\n", 
-                           current_task, arg0);
-                    while(1); // 暂时先挂起
+                    task_exit(arg0);
                     break;
                     
                 default:

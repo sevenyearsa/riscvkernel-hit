@@ -30,4 +30,5 @@ void mmu_init(void);
 
 extern uint64_t root_page_table;
 void map_page(uint64_t *pgd, uint64_t va, uint64_t pa, uint64_t flags);
+void free_user_page_table(uint64_t *pgd);
 #endif
