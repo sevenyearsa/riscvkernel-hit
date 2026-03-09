@@ -22,6 +22,24 @@ void sys_print(const char *s) {
     }
 }
 
+long sys_read(unsigned int fd, char *buf, unsigned long count) {
+    long ret;
+
+    asm volatile(
+        "mv a7, %1\n"
+        "mv a0, %2\n"
+        "mv a1, %3\n"
+        "mv a2, %4\n"
+        "ecall\n"
+        "mv %0, a0\n"
+        : "=r"(ret)
+        : "r"(SYS_READ), "r"(fd), "r"(buf), "r"(count)
+        : "a0", "a1", "a2", "a7"
+    );
+
+    return ret;
+}
+
 /*
  * 向内核发送 任务主动休眠 的系统调用
  */
@@ -62,7 +80,6 @@ int sys_fork(void) {
     return ret;
 }
 
-// user_lib.c 追加：
 void sys_exec(void) {
     asm volatile(
         "mv a7, %0\n"

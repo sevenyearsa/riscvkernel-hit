@@ -25,10 +25,18 @@
 
 // 核心类型定义，使用 64 位无符号整数表示地址
 
+static inline uint64_t mmu_make_satp(uint64_t *pgd) {
+    return (8ULL << 60) | ((uint64_t)pgd >> 12);
+}
+
+static inline uint64_t *mmu_satp_to_pgd(uint64_t satp) {
+    return (uint64_t *)((satp & 0xFFFFFFFFFFFULL) << 12);
+}
 
 void mmu_init(void);
 
 extern uint64_t root_page_table;
 void map_page(uint64_t *pgd, uint64_t va, uint64_t pa, uint64_t flags);
+uint64_t *walk_pte(uint64_t *pgd, uint64_t va, int create);
 void free_user_page_table(uint64_t *pgd);
 #endif

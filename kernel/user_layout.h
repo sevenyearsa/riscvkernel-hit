@@ -1,0 +1,12 @@
+#ifndef USER_LAYOUT_H
+#define USER_LAYOUT_H
+
+#include "mmu.h"
+
+#define USER_RW_PAGE_VA    0x40000000UL
+#define USER_STACK_TOP     0x40100000UL
+#define USER_STACK_PAGE_VA (USER_STACK_TOP - PAGE_SIZE)
+#define USER_STACK_GUARD_VA (USER_STACK_TOP - 2 * PAGE_SIZE)
+#define USER_RO_PAGE_VA    0x50000000UL
+
+#endif

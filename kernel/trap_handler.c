@@ -3,20 +3,84 @@ extern void printf(const char *fmt, ...);
 extern void timer_load_next(void);
 extern void task_yield(void);
 extern void uart_putc(char c);
-extern unsigned long task_exec(unsigned long epc);
-// 引入系统调用号
+extern int uart_getc(void);
 #include "syscall.h"
-extern int current_task;
-extern int task_fork(unsigned long *parent_sp, unsigned long epc); // 引入 fork 函数
-// 注意参数变多了！接收从汇编 a0~a5 传来的数据
+#include "trapframe.h"
+#include "exec.h"
+
+extern int task_fork(struct trapframe *parent_tf, unsigned long epc);
+extern void task_exit(int status);
+
+typedef unsigned long (*syscall_fn_t)(unsigned long arg0, unsigned long arg1, 
+                                      unsigned long epc, struct trapframe *tf);
+
+unsigned long do_sys_write(unsigned long arg0, unsigned long arg1, unsigned long epc, struct trapframe *tf) {
+    uart_putc((char)arg0); 
+    return epc + 4;
+}
+
+unsigned long do_sys_read(unsigned long arg0, unsigned long arg1, unsigned long epc, struct trapframe *tf) {
+    unsigned long count = tf->a2;
+    char *buf = (char *)arg1;
+
+    if ((unsigned int)arg0 != 0 || buf == 0 || count == 0) {
+        tf->a0 = -1UL;
+        return epc + 4;
+    }
+
+    for (unsigned long i = 0; i < count; i++) {
+        int ch = uart_getc();
+
+        if (ch == '\r') {
+            ch = '\n';
+        }
+        buf[i] = (char)ch;
+        tf->a0 = i + 1;
+        return epc + 4;
+    }
+
+    tf->a0 = 0;
+    return epc + 4;
+}
+
+unsigned long do_sys_yield(unsigned long arg0, unsigned long arg1, unsigned long epc, struct trapframe *tf) {
+    task_yield();
+    return epc + 4;
+}
+
+unsigned long do_sys_exit(unsigned long arg0, unsigned long arg1, unsigned long epc, struct trapframe *tf) {
+    task_exit((int)arg0);
+    return epc + 4; // 虽然永远不会返回，但需遵守接口规范
+}
+
+unsigned long do_sys_clone(unsigned long arg0, unsigned long arg1, unsigned long epc, struct trapframe *tf) {
+    tf->a0 = task_fork(tf, epc); // 写入子进程 PID 到父进程的 a0
+    return epc + 4;
+}
+
+unsigned long do_sys_execve(unsigned long arg0, unsigned long arg1, unsigned long epc, struct trapframe *tf) {
+    // 极致优雅：exec 成功直接返回新程序的入口点
+    return task_exec(epc, tf); 
+}
+
+#define MAX_SYSCALL_NUM 300 
+
+syscall_fn_t sys_call_table[MAX_SYSCALL_NUM] = {
+    [SYS_READ]        = do_sys_read,
+    [SYS_WRITE]       = do_sys_write,
+    [SYS_SCHED_YIELD] = do_sys_yield,
+    [SYS_EXIT]        = do_sys_exit,
+    [SYS_CLONE]       = do_sys_clone,
+    [SYS_EXECVE]      = do_sys_execve,
+};
+
 unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long tval, 
                            unsigned long arg0, unsigned long arg1, unsigned long sys_num,
-                        unsigned long *sp) {
+                        struct trapframe *tf) {
                            
     int is_interrupt = (cause & 0x8000000000000000L) != 0;
     unsigned long exception_code = cause & 0x7FFFFFFFFFFFFFFFL;
 
-    // --- 处理硬件中断 (时钟) ---
     if (is_interrupt) {
         if (exception_code == 7) { 
             timer_load_next();
@@ -24,48 +88,15 @@ unsigned long trap_handler(unsigned long cause, unsigned long epc, unsigned long
             return epc; 
         }
     } 
-    // --- 处理异常和系统调用 ---
     else {
-        // 来自 U-mode (8) 或 M-mode (11) 的 ecall
-       // 来自 U-mode (8) 或 M-mode (11) 的 ecall
         if (exception_code == 8 || exception_code == 11) {
-            
-            // 系统调用分发中心 (Syscall Dispatcher)
-            switch (sys_num) {
-                // 【修改】：拦截标准写入调用
-                case SYS_WRITE:
-                    // 目前我们直接暴风吸入 a0 作为字符打印。
-                    // 未来如果支持 fd 和 buf，就要根据规范处理 a0(fd), a1(buf), a2(count) 了。
-                    uart_putc((char)arg0); 
-                    break;
-                    
-                // 【修改】：拦截标准让出调用
-                case SYS_SCHED_YIELD:
-                    task_yield();
-                    break;
-                    
-                // 【新增】：可以顺手预留一个 EXIT 接口，防止非法调用导致崩溃
-                case SYS_EXIT:
-                    task_exit(arg0);
-                    break;
-                case SYS_CLONE: // 220 号系统调用
-                    // fork 返回的子进程 PID，我们直接强行写回栈里的 a0 寄存器位置！
-                    // trap.S 中 a0 存在 10*8(sp) 的位置，即数组的第 10 个元素
-                    sp[10] = task_fork(sp, epc);
-                    break;
-                case SYS_EXECVE:
-                    // 极致优雅：如果 exec 成功，它会返回新程序的入口点
-                    // 我们直接 return，截断下面的 epc + 4 逻辑，让 CPU 降维后直接跳入新应用！
-                    return task_exec(epc);
-                default:
-                    printf("\n[KERNEL] Invalid syscall number: %d\n", sys_num);
-                    break;
+            if (sys_num < MAX_SYSCALL_NUM && sys_call_table[sys_num] != 0) {
+                return sys_call_table[sys_num](arg0, arg1, epc, tf);
+            } else {
+                printf("\n[KERNEL] Unimplemented syscall number: %d\n", sys_num);
+                return epc + 4;
             }
-            
-            return epc + 4;
         }
-
-        // 依然保留我们的缺页诊断雷达
         if (exception_code == 12 || exception_code == 13 || exception_code == 15) {
             printf("\n!!!! MMU PAGE FAULT DETECTED !!!!\n");
             printf("Cause: %d, Bad VA: 0x%x, At EPC: 0x%x\n", exception_code, tval, epc);

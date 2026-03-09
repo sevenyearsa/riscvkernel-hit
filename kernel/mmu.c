@@ -4,6 +4,7 @@
 extern void *alloc_page(void);
 extern void printf(const char *fmt, ...);
 extern void free_page(void *p);
+extern char kernel_end[];
 
 // 内核的顶级页表（Root Page Table）物理地址
 uint64_t root_page_table = 0;
@@ -34,10 +35,7 @@ static inline uint64_t pa_to_pte(uint64_t pa, uint64_t flags) {
     return ((pa >> 12) << 10) | flags;
 }
 
-/*
- * 【核心魔法】：将一个物理地址 pa 映射到虚拟地址 va
- */
-void map_page(uint64_t *pgd, uint64_t va, uint64_t pa, uint64_t flags) {
+uint64_t *walk_pte(uint64_t *pgd, uint64_t va, int create) {
     uint64_t *table = pgd;
 
     for (int level = 2; level > 0; level--) {
@@ -46,18 +44,28 @@ void map_page(uint64_t *pgd, uint64_t va, uint64_t pa, uint64_t flags) {
 
         if (*pte & PTE_V) {
             table = (uint64_t *)pte_to_pa(*pte);
-        } else {
-            uint64_t new_page = (uint64_t)alloc_page();
-            // 【关键修复】：中间节点只能有 PTE_V！
-            // 绝对不能在这里放 flags，否则硬件会把它误认为是一个“巨页”映射
-            *pte = pa_to_pte(new_page, PTE_V); 
-            table = (uint64_t *)new_page;
+            continue;
         }
+
+        if (!create) {
+            return 0;
+        }
+
+        uint64_t new_page = (uint64_t)alloc_page();
+        *pte = pa_to_pte(new_page, PTE_V);
+        table = (uint64_t *)new_page;
     }
 
-    uint64_t vpn0 = get_vpn(va, 0);
+    return &table[get_vpn(va, 0)];
+}
+
+/*
+ * 【核心魔法】：将一个物理地址 pa 映射到虚拟地址 va
+ */
+void map_page(uint64_t *pgd, uint64_t va, uint64_t pa, uint64_t flags) {
+    uint64_t *pte = walk_pte(pgd, va, 1);
     // 只有叶子节点才写入真正的权限和 A/D 位
-    table[vpn0] = pa_to_pte(pa, flags | PTE_A | PTE_D);
+    *pte = pa_to_pte(pa, flags | PTE_A | PTE_D);
 }
 /*
  * MMU 初始化与点火
@@ -78,7 +86,7 @@ void mmu_init(void) {
     uint64_t ram_start = 0x80000000L;
     uint64_t ram_size  = 128 * 1024 * 1024;
     for (uint64_t pa = ram_start; pa < ram_start + ram_size; pa += PAGE_SIZE) {
-        map_page((uint64_t *)root_page_table, pa, pa, PTE_R | PTE_W | PTE_X | PTE_U | PTE_V);
+        map_page((uint64_t *)root_page_table, pa, pa, PTE_R | PTE_W | PTE_X | PTE_V);
     }
     printf("[SYS] Page tables built. Root PGD at physical address: 0x%x\n", root_page_table);
 
@@ -123,7 +131,10 @@ void free_user_page_table(uint64_t *pgd) {
                     for (int k = 0; k < 512; k++) {
                         if (pte_table[k] & PTE_V) {
                             // 【斩草除根】：拔掉存有用户真实数据的物理页！
-                            free_page((void *)pte_to_pa(pte_table[k]));
+                            uint64_t leaf_pa = pte_to_pa(pte_table[k]);
+                            if (leaf_pa >= (uint64_t)kernel_end) {
+                                free_page((void *)leaf_pa);
+                            }
                         }
                     }
                     // 拔掉第三级页表本身！

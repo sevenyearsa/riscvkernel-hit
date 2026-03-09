@@ -13,11 +13,16 @@ CFLAGS = -nostdlib -fno-builtin -mcmodel=medany -g -Wall
 
 # 3. 目标文件
 OBJS = boot.o uart.o printf.o trap.o trap_handler.o timer.o \
-	switch.o task.o spinlock.o page.o mmu.o user_lib.o main.o
+	switch.o sched.o exec.o task.o spinlock.o page.o mmu.o user_lib.o main.o
 
 # 4. 默认目标：链接成最终的 ELF 镜像
 os.elf: $(OBJS)
 	$(CC) $(CFLAGS) -T os.ld -o os.elf $(OBJS)
+
+exec.o: exec.c ../user/app_bin.h
+
+../user/app_bin.h: ../user/app.c ../user/app.ld ../user/Makefile
+	$(MAKE) -C ../user app_bin.h
 
 # 5. 编译 C 源码
 %.o: %.c
@@ -31,9 +36,9 @@ os.elf: $(OBJS)
 # -machine virt: 指定使用 virt 虚拟主板
 # -bios none: 禁用默认的 OpenSBI 固件，让 QEMU 直接从我们的代码起点跑！
 # -kernel os.elf: 加载我们刚编译出的内核镜像
-# -nographic: 在当前终端输出，不弹窗
+# -display none -monitor none -serial stdio: 直接把串口绑到当前终端，方便和 shell 交互
 run: os.elf
-	qemu-system-riscv64 -machine virt -bios none -kernel os.elf -nographic
+	qemu-system-riscv64 -machine virt -bios none -kernel os.elf -display none -monitor none -serial stdio
 
 # 8. 清理工程
 clean:

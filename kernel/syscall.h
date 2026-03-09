@@ -39,9 +39,11 @@ void sys_print(const char *s);
 void sys_yield(void);
 
 // 预留的未来标准接口（暂时不用实现）
+long sys_read(unsigned int fd, char *buf, unsigned long count);
 long sys_write(unsigned int fd, const char *buf, unsigned long count);
 void sys_exit(int status);
 int  sys_getpid(void);
 int  sys_fork(void);
+void sys_exec(void);
 
 #endif

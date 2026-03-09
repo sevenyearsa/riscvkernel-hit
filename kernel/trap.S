@@ -1,110 +1,105 @@
 # trap.S
+#include "trapframe.h"
 .section .text
 .global trap_vector
+.global trap_return
 .align 4
 
 trap_vector:
-    # 1. 申请 256 字节的栈空间 (足够保存 32 个 8 字节的寄存器)
-    addi sp, sp, -256
+    # user -> kernel: sp 切到 mscratch 保存的内核栈顶，mscratch 留下原用户 sp
+    csrrw sp, mscratch, sp
+    addi sp, sp, -TRAPFRAME_SIZE
 
-    # 2. 封存现场：把通用寄存器全部压入栈中保存
-    sd ra, 1*8(sp)
-    sd gp, 3*8(sp)
-    sd tp, 4*8(sp)
-    sd t0, 5*8(sp)
-    sd t1, 6*8(sp)
-    sd t2, 7*8(sp)
-    sd s0, 8*8(sp)
-    sd s1, 9*8(sp)
-    sd a0, 10*8(sp)  # <--- 用户的第一个参数 (arg0) 存在这里！
-    sd a1, 11*8(sp)
-    sd a2, 12*8(sp)
-    sd a3, 13*8(sp)
-    sd a4, 14*8(sp)
-    sd a5, 15*8(sp)
-    sd a6, 16*8(sp)
-    sd a7, 17*8(sp)  # <--- 用户的业务号 (syscall_num) 存在这里！
-    sd s2, 18*8(sp)
-    sd s3, 19*8(sp)
-    sd s4, 20*8(sp)
-    sd s5, 21*8(sp)
-    sd s6, 22*8(sp)
-    sd s7, 23*8(sp)
-    sd s8, 24*8(sp)
-    sd s9, 25*8(sp)
-    sd s10, 26*8(sp)
-    sd s11, 27*8(sp)
-    sd t3, 28*8(sp)
-    sd t4, 29*8(sp)
-    sd t5, 30*8(sp)
-    sd t6, 31*8(sp)
+    sd ra, TF_RA_OFF(sp)
+    sd gp, TF_GP_OFF(sp)
+    sd tp, TF_TP_OFF(sp)
+    sd t0, TF_T0_OFF(sp)
+    sd t1, TF_T1_OFF(sp)
+    sd t2, TF_T2_OFF(sp)
+    sd s0, TF_S0_OFF(sp)
+    sd s1, TF_S1_OFF(sp)
+    sd a0, TF_A0_OFF(sp)
+    sd a1, TF_A1_OFF(sp)
+    sd a2, TF_A2_OFF(sp)
+    sd a3, TF_A3_OFF(sp)
+    sd a4, TF_A4_OFF(sp)
+    sd a5, TF_A5_OFF(sp)
+    sd a6, TF_A6_OFF(sp)
+    sd a7, TF_A7_OFF(sp)
+    sd s2, TF_S2_OFF(sp)
+    sd s3, TF_S3_OFF(sp)
+    sd s4, TF_S4_OFF(sp)
+    sd s5, TF_S5_OFF(sp)
+    sd s6, TF_S6_OFF(sp)
+    sd s7, TF_S7_OFF(sp)
+    sd s8, TF_S8_OFF(sp)
+    sd s9, TF_S9_OFF(sp)
+    sd s10, TF_S10_OFF(sp)
+    sd s11, TF_S11_OFF(sp)
+    sd t3, TF_T3_OFF(sp)
+    sd t4, TF_T4_OFF(sp)
+    sd t5, TF_T5_OFF(sp)
+    sd t6, TF_T6_OFF(sp)
 
-    # 保存发生异常时的 PC 地址 (mepc) 到栈的第 0 个位置
     csrr t0, mepc
-    sd t0, 0(sp)
+    sd t0, TF_EPC_OFF(sp)
+    csrr t0, mscratch
+    sd t0, TF_USER_SP_OFF(sp)
 
-    # 3. 准备调用 trap_handler(cause, epc, tval, arg0, arg1, sys_num)
-    # 根据 C 语言调用约定，前 6 个参数分别放在 a0~a5 寄存器中
-    csrr a0, mcause      # 第 1 个参数：cause
-    csrr a1, mepc        # 第 2 个参数：epc
-    csrr a2, mtval       # 第 3 个参数：tval
-    ld   a3, 10*8(sp)    # 第 4 个参数：从栈里挖出用户刚才存的 a0
-    ld   a4, 11*8(sp)    # 第 5 个参数：从栈里挖出用户刚才存的 a1
-    ld   a5, 17*8(sp)    # 第 6 个参数：从栈里挖出用户刚才存的 a7 (业务号)
-
+    csrr a0, mcause
+    csrr a1, mepc
+    csrr a2, mtval
+    ld   a3, TF_A0_OFF(sp)
+    ld   a4, TF_A1_OFF(sp)
+    ld   a5, TF_A7_OFF(sp)
     mv   a6, sp
 
-    # 4. 呼叫 C 语言的内核总管！
     call trap_handler
-
-    # 5. trap_handler 结束工作后，会通过 a0 返回新的 PC 地址
-    # 我们立刻把这个新地址写入 mepc
+    sd   a0, TF_EPC_OFF(sp)
     csrw mepc, a0
 
-.global trap_return
-    trap_return:
+trap_return:
+    ld t2, TF_EPC_OFF(sp)
+    csrw mepc, t2
+    ld t0, TF_USER_SP_OFF(sp)
+    csrw mscratch, t0
 
-    # 6. 恢复现场：把寄存器原封不动地从栈里挖出来还给 CPU
-    ld ra, 1*8(sp)
-    ld gp, 3*8(sp)
-    ld tp, 4*8(sp)
-    ld t0, 5*8(sp)
-    ld t1, 6*8(sp)
-    ld t2, 7*8(sp)
-    ld s0, 8*8(sp)
-    ld s1, 9*8(sp)
-    ld a0, 10*8(sp)
-    ld a1, 11*8(sp)
-    ld a2, 12*8(sp)
-    ld a3, 13*8(sp)
-    ld a4, 14*8(sp)
-    ld a5, 15*8(sp)
-    ld a6, 16*8(sp)
-    ld a7, 17*8(sp)
-    ld s2, 18*8(sp)
-    ld s3, 19*8(sp)
-    ld s4, 20*8(sp)
-    ld s5, 21*8(sp)
-    ld s6, 22*8(sp)
-    ld s7, 23*8(sp)
-    ld s8, 24*8(sp)
-    ld s9, 25*8(sp)
-    ld s10, 26*8(sp)
-    ld s11, 27*8(sp)
-    ld t3, 28*8(sp)
-    ld t4, 29*8(sp)
-    ld t5, 30*8(sp)
-    ld t6, 31*8(sp)
+    ld ra, TF_RA_OFF(sp)
+    ld gp, TF_GP_OFF(sp)
+    ld tp, TF_TP_OFF(sp)
+    ld t2, TF_T2_OFF(sp)
+    ld s0, TF_S0_OFF(sp)
+    ld s1, TF_S1_OFF(sp)
+    ld a0, TF_A0_OFF(sp)
+    ld a1, TF_A1_OFF(sp)
+    ld a2, TF_A2_OFF(sp)
+    ld a3, TF_A3_OFF(sp)
+    ld a4, TF_A4_OFF(sp)
+    ld a5, TF_A5_OFF(sp)
+    ld a6, TF_A6_OFF(sp)
+    ld a7, TF_A7_OFF(sp)
+    ld s2, TF_S2_OFF(sp)
+    ld s3, TF_S3_OFF(sp)
+    ld s4, TF_S4_OFF(sp)
+    ld s5, TF_S5_OFF(sp)
+    ld s6, TF_S6_OFF(sp)
+    ld s7, TF_S7_OFF(sp)
+    ld s8, TF_S8_OFF(sp)
+    ld s9, TF_S9_OFF(sp)
+    ld s10, TF_S10_OFF(sp)
+    ld s11, TF_S11_OFF(sp)
+    ld t3, TF_T3_OFF(sp)
+    ld t4, TF_T4_OFF(sp)
+    ld t5, TF_T5_OFF(sp)
+    ld t6, TF_T6_OFF(sp)
 
-    addi sp, sp, 256
-    
-    # 7. 神圣跳跃：降级回到 User 态的下一条指令
+    li t1, (3 << 11)
+    csrc mstatus, t1
+    li t1, (1 << 7)
+    csrs mstatus, t1
+
+    ld t0, TF_T0_OFF(sp)
+    ld t1, TF_T1_OFF(sp)
+    addi sp, sp, TRAPFRAME_SIZE
+    csrrw sp, mscratch, sp
     mret
-# 【新增】：在文件最后加上这个子进程专属入口
-.global ret_from_fork
-ret_from_fork:
-    # 此时的 0(sp) 里，躺着的是我们在 C 语言里刚刚强行塞进去的 (epc + 4)
-    ld t0, 0(sp)       
-    csrw mepc, t0      # 直接装填进硬件
-    
-    j trap_return      # 跳回恢复现场的流程，降维打击！

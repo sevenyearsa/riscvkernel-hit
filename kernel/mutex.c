@@ -1,5 +1,6 @@
 // mutex.c
 #include "spinlock.h"
+#include "sched.h"
 
 // 互斥锁结构体
 typedef struct {
@@ -46,9 +47,8 @@ void mutex_unlock(mutex_t *m) {
     m->owner_id = -1;
     
     // 粗暴简单的唤醒逻辑：把所有休眠的任务都叫醒（真实 OS 里会有一个精准的等待队列）
-    extern int task_states[];
-    for (int i = 0; i < 2; i++) {
-        if (task_states[i] == 2) { // 如果是 SLEEPING
+    for (int i = 0; i < MAX_TASKS; i++) {
+        if (task_states[i] == TASK_SLEEPING) {
             task_wakeup(i);
         }
     }

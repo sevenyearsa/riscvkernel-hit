@@ -10,12 +10,16 @@ typedef unsigned int uint32_t;
 // 3. 定义关键寄存器的物理地址
 // THR (Transmit Holding Register): 发送数据寄存器，偏移量为 0
 #define UART0_THR  ((volatile uint8_t *)(UART0_BASE + 0x00))
+// RHR (Receive Holding Register): 接收数据寄存器，偏移量也为 0
+#define UART0_RHR  ((volatile uint8_t *)(UART0_BASE + 0x00))
 
 // LSR (Line Status Register): 线路状态寄存器，偏移量为 5
 #define UART0_LSR  ((volatile uint8_t *)(UART0_BASE + 0x05))
 
 // LSR 的第 5 位 (0x20) 如果为 1，表示发送缓冲区为空，可以塞入下一个字符了
 #define UART0_LSR_EMPTY_MASK 0x20
+// LSR 的第 0 位 (0x01) 如果为 1，表示收到了新的输入字符
+#define UART0_LSR_READY_MASK 0x01
 
 /*
  * 串口初始化
@@ -47,4 +51,14 @@ void uart_puts(const char *str) {
     while (*str) {
         uart_putc(*str++);
     }
+}
+
+/*
+ * 读取单个字符
+ */
+int uart_getc(void) {
+    while ((*UART0_LSR & UART0_LSR_READY_MASK) == 0) {
+    }
+
+    return *UART0_RHR;
 }
